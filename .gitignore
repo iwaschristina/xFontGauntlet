@@ -1,0 +1,8 @@
+# Do not commit extracted corpus, release archives, or temporary verification output.
+# The complete, unchanged ZIP is distributed exclusively as a GitHub Release asset.
+/xFontGauntlet_v*.zip
+/TestCorpus/
+/Tools/
+/.release-verify/
+*.tmp
+*.part
