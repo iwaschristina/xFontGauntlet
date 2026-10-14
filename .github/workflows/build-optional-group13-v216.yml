@@ -1,4 +1,4 @@
-name: Build optional Group13 complete xFontGauntlet v2.16
+name: Build v2.16 exact Group13 folder only
 on:
   push:
     branches: [automation/package-group13-v2.16]
@@ -34,7 +34,7 @@ jobs:
           with zipfile.ZipFile(old) as a,zipfile.ZipFile(new) as b:
             ai=a.infolist();bi=b.infolist()
             removed=[i for i in ai if i.filename.startswith(group)]
-            assert len(removed)==22109
+            assert len(removed)==21633
             assert len(set(i.filename.casefold() for i in bi))==len(bi)
             assert b.testzip() is None and nested in b.namelist() and guide in b.namelist()
             assert not any(i.filename.startswith(group) for i in bi)
@@ -66,7 +66,7 @@ jobs:
             assert cat['accounting']['groups']==205
             assert cat['accounting']['declared_logical_cases']==2969
             assert cat['release_identity']['version']=='2.16'
-            assert cat['group13_optional_archive']['original_entries']==22109
+            assert cat['group13_optional_archive']['original_entries']==21633
             with tempfile.TemporaryDirectory() as tmp:
               zroot=pathlib.Path(tmp,'TestCorpus')
               zroot.mkdir()
