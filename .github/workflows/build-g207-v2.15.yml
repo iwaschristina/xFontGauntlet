@@ -1,4 +1,4 @@
-name: Build complete G207 v2.15 and verify physical fixtures
+name: Build G207 v2.15 with optional nested Group 13
 on:
   push:
     branches: [automation/build-g207-v2.15]
@@ -42,10 +42,16 @@ jobs:
               for kind in ('TTC','OTC'):
                   b=z.read(prefix+'01_X02_Native_Font_Preservation_And_Output_Safety/Native_'+kind+'.'+kind.lower())
                   with TTCollection(io.BytesIO(b)) as c:assert len(c.fonts)>=1
-              for name in ('Entire_Content_Duplicated.bdf','Entire_Content_Triplicated.bdf','Inserted_NUL_16_Middle.bdf'):
-                  raw=z.read(prefix+'02_X03_BDF_Corruption_Detection_CrossTool/'+name)
-                  orig=z.read('TestCorpus/13_Corruption_Matrix_All_Font_Types/Bitmap-Console/bdf/'+name)
-                  assert raw==orig
+              archived='Tools/Optional Test Groups/Group13_Corruption_Matrix_All_Font_Types.zip'
+              assert archived in z.namelist()
+              assert not any(n.startswith('TestCorpus/13_Corruption_Matrix_All_Font_Types/') for n in z.namelist())
+              with zipfile.ZipFile(io.BytesIO(z.read(archived))) as inner:
+                  assert inner.testzip() is None
+                  assert len(inner.infolist())==22109
+                  for name in ('Entire_Content_Duplicated.bdf','Entire_Content_Triplicated.bdf','Inserted_NUL_16_Middle.bdf'):
+                      raw=z.read(prefix+'02_X03_BDF_Corruption_Detection_CrossTool/'+name)
+                      orig=inner.read('13_Corruption_Matrix_All_Font_Types/Bitmap-Console/bdf/'+name)
+                      assert raw==orig
               for ext in ('sfd','glyphs'):
                   root=prefix+('03_X04_Recent_Physical_Validation_Boundaries/LargeSFD/' if ext=='sfd' else '03_X04_Recent_Physical_Validation_Boundaries/LargeGlyphs/')
                   assert len(z.read(root+'Large_Valid.'+ext))>2*1024*1024
