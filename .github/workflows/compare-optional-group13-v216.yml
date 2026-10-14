@@ -1,0 +1,61 @@
+name: Compare full v2.15 and optional-Group13 v2.16 historical validation
+on:
+  push:
+    branches: [automation/package-group13-v2.16]
+    paths: [.github/workflows/compare-optional-group13-v216.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Download full v2.15 baseline and already verified full v2.16 candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v2.15 --repo iwaschristina/xFontGauntlet --pattern xFontGauntlet_v2.15.zip
+          gh run download 38648751766 --repo iwaschristina/xFontGauntlet --name xFontGauntlet-v2.16-optional-Group13-full-candidate --dir .
+          sha256sum -c xFontGauntlet_v2.16.zip.sha256
+          test "$(sha256sum xFontGauntlet_v2.16.zip | cut -d ' ' -f1)" = 0ec01f19b126e33a4abb4cb028a3ead38900c5348376685cc2e742ba30e84665
+      - name: Extract ordinary versions into distinct workspaces
+        run: |
+          python - <<'PY'
+          import zipfile
+          for n in ('2.15','2.16'):
+            with zipfile.ZipFile('xFontGauntlet_v'+n+'.zip') as z:
+              z.extractall('stage'+n.replace('.','_'))
+          PY
+      - name: Compare original PowerShell integrity suite errors
+        run: |
+          set +e
+          pwsh -NoProfile -File stage2_15/Tools/Invoke-CorpusValidation.ps1 -Mode Integrity -CorpusRoot "$(pwd)/stage2_15/TestCorpus" -CorpusZipPath "$(pwd)/xFontGauntlet_v2.15.zip" -ReportPath "$(pwd)/old.json" >old.log 2>&1
+          echo "V215_VALIDATOR_EXIT=$?"
+          pwsh -NoProfile -File stage2_16/Tools/Invoke-CorpusValidation.ps1 -Mode Integrity -CorpusRoot "$(pwd)/stage2_16/TestCorpus" -CorpusZipPath "$(pwd)/xFontGauntlet_v2.16.zip" -ReportPath "$(pwd)/new.json" >new.log 2>&1
+          echo "V216_VALIDATOR_EXIT=$?"
+          python - <<'PY'
+          import json
+          old=json.load(open('old.json'))
+          new=json.load(open('new.json'))
+          def canon(arr,label):
+            return set(x.replace('stage2_15/','<STAGE>/').replace('stage2_16/','<STAGE>/') for x in arr)
+          a=canon(old.get('failures',[]),'old')
+          b=canon(new.get('failures',[]),'new')
+          print('BASELINE_HISTORICAL_FAILURES',len(a),sorted(a))
+          print('NESTED_HISTORICAL_FAILURES',len(b),sorted(b))
+          print('NEW_HISTORICAL_FAILURES',len(b-a),sorted(b-a))
+          assert not (b-a),'Optional Group13 packaging introduced a new historical validation error'
+          print('G208 HISTORICAL NO-NEW-REGRESSIONS: PASS')
+          PY
+      - name: Retain comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Group13-v216-validation-comparison
+          path: |
+            old.json
+            new.json
+            old.log
+            new.log
+          retention-days: 3
