@@ -1,0 +1,47 @@
+name: Publish fully verified xFontGauntlet v2.15 G207
+on:
+  push:
+    branches: [automation/build-g207-v2.15]
+    paths: [.github/workflows/publish-g207-v2.15.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install fonttools==4.63.0 brotli==1.2.0
+      - name: Require full structural and unchanged historical-integrity comparisons
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/iwaschristina/xFontGauntlet/releases/latest --jq .tag_name)" = v2.14
+          test "$(gh api repos/iwaschristina/xFontGauntlet/actions/runs/38647039356 --jq .conclusion)" = success
+          test "$(gh api repos/iwaschristina/xFontGauntlet/actions/runs/38647211414 --jq .conclusion)" = success
+      - name: Fetch current authoritative v2.14 full archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v2.14 --repo iwaschristina/xFontGauntlet --pattern xFontGauntlet_v2.14.zip
+      - name: Independently rebuild complete G207 and compare immutable SHA
+        run: |
+          python scripts/build_g207_v2_15.py
+          sha256sum -c xFontGauntlet_v2.15.zip.sha256
+          test "$(sha256sum xFontGauntlet_v2.15.zip | cut -d ' ' -f1)" = 2e06d31b0375cb7589bc4825adb269901888c7f5381237447c8dbb7b2fd736bb
+      - name: Publish only new immutable complete v2.15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v2.15 --repo iwaschristina/xFontGauntlet >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing v2.15 release"
+            exit 1
+          fi
+          gh release create v2.15 \
+            --repo iwaschristina/xFontGauntlet \
+            --target main \
+            --title "xFontGauntlet v2.15 (G207 Finder/Converter/Auditor regressions)" \
+            --notes "Complete successor to immutable SHA-verified v2.14/G206. Adds 31 G207 cases: six x02 xFontMorph v2.17 native valid TTF/OTF/TTC/OTC preservation, mislabeled TTX XML content route and strict existing-output skip; four x03 xFontHound v2.1 valid/corrupt BDF cases including byte-identical copies of the three real BDF corruptions previously copied incorrectly as Confirmed; and 21 x04 xFontMedic v2.0.18–2.0.37 BDF ordering/names, UFO GLIF mapping/XML case, Classic Mac AFM/AMFM CR, PFB header, CSS/SVG dependency comments, SFD/Glyphs late termination and streamed validation. All 54,048 v2.14 entries preserved except three regenerated root metadata/catalog records, whose originals are archived under Tools/Corpus Contamination Finder/Changed Renamed or Removed Corpus Files/G207_Post_v2_14_Coverage/Originals/. Group13 all 22,109 original entries unchanged and remains excluded from routine x02 converter runs. Historical integrity validator reports the exact same six inherited failures; zero new failures. New fixture expectations have NOT been certified by complete Windows application-level execution." \
+            --latest \
+            xFontGauntlet_v2.15.zip xFontGauntlet_v2.15.zip.sha256
