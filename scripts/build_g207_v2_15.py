@@ -7,7 +7,7 @@ from pathlib import Path,PurePosixPath
 import io,json,hashlib,plistlib,struct,zlib,zipfile,re,sys,tempfile
 from fontTools.ttLib import TTFont
 
-OLD=Path("xFontGauntlet_v2.15.zip")
+OLD=Path("xFontGauntlet_v2.14.zip")
 NEW=Path("xFontGauntlet_v2.15.zip")
 OLD_HASH="219fed0da2923ba7510fdd4e9d4c93d2687c42181ac51f1b723ef7f2c22ddf29"
 GROUP="205_G207_Finder_BDF_Converter_Native_Auditor_New_Validations"
