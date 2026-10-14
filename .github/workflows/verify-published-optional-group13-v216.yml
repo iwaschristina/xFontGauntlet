@@ -1,0 +1,76 @@
+name: Independently verify published v2.16 optional Group13
+on:
+  push:
+    branches: [automation/package-group13-v2.16]
+    paths: [.github/workflows/verify-published-optional-group13-v216.yml]
+permissions: {contents: read}
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Independently retrieve complete v2.15 and published v2.16 ZIPs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v2.15 --repo iwaschristina/xFontGauntlet --pattern xFontGauntlet_v2.15.zip
+          gh release download v2.16 --repo iwaschristina/xFontGauntlet --pattern 'xFontGauntlet_v2.16.zip*'
+      - name: Verify published asset checksum, optional Group13 and unmodified members
+        run: |
+          sha256sum -c xFontGauntlet_v2.16.zip.sha256
+          python - <<'PY'
+          import hashlib,io,json,re,zipfile
+          sha=lambda b:hashlib.sha256(b).hexdigest()
+          old='xFontGauntlet_v2.15.zip'
+          new='xFontGauntlet_v2.16.zip'
+          assert sha(open(old,'rb').read())=='2e06d31b0375cb7589bc4825adb269901888c7f5381237447c8dbb7b2fd736bb'
+          assert sha(open(new,'rb').read())=='0ec01f19b126e33a4abb4cb028a3ead38900c5348376685cc2e742ba30e84665'
+          assert len(open(new,'rb').read())==98917857
+          group='TestCorpus/13_Corruption_Matrix_All_Font_Types/'
+          optional='Tools/Optional Test Groups/Group13_Corruption_Matrix_All_Font_Types.zip'
+          archive='Tools/Corpus Contamination Finder/Changed Renamed or Removed Corpus Files/G208_Post_v2_15_Group13_Archive/Originals/'
+          replaced={'CURRENT_CORPUS_MANIFEST.json','CORPUS_COVERAGE_LOCK.json','CORPUS_CATALOG.json'}
+          with zipfile.ZipFile(old) as a,zipfile.ZipFile(new) as b:
+            oldinfo=a.infolist();newinfo=b.infolist()
+            groupinfo=[i for i in oldinfo if i.filename.startswith(group)]
+            retained=[i for i in oldinfo if not i.filename.startswith(group)]
+            assert len(oldinfo)==54132 and len(groupinfo)==21633
+            assert len(newinfo)==32510
+            assert sum(not i.is_dir() for i in newinfo)==22516
+            assert sum(i.is_dir() for i in newinfo)==9994
+            assert len(set(i.filename.casefold() for i in newinfo))==len(newinfo)
+            assert b.testzip() is None
+            assert not any(i.filename.startswith(group) for i in newinfo)
+            assert len([i for i in newinfo if re.search(r'(^|/)13_[^/]+/',i.filename)])==476
+            for before in retained:
+              after=b.getinfo(before.filename)
+              if before.filename in replaced:
+                assert a.read(before)==b.read(archive+before.filename)
+                assert a.read(before)!=b.read(after)
+              else:
+                for key in ('CRC','file_size','compress_size','compress_type','date_time','flag_bits','extra','comment','external_attr','internal_attr','create_system'):
+                  assert getattr(before,key)==getattr(after,key),(before.filename,key)
+                if not before.is_dir():assert sha(a.read(before))==sha(b.read(after))
+            with zipfile.ZipFile(io.BytesIO(b.read(optional))) as nested:
+              contents=nested.infolist()
+              assert len(contents)==21633 and nested.testzip() is None
+              for x,y in zip(groupinfo,contents):
+                assert x.filename[len('TestCorpus/'):] == y.filename
+                assert x.CRC==y.CRC and x.file_size==y.file_size and x.external_attr==y.external_attr
+                assert x.date_time==y.date_time
+                if not x.is_dir():assert sha(a.read(x))==sha(nested.read(y)),x.filename
+            guide=b.read('Tools/Optional Test Groups/README_Group13.txt').decode()
+            assert 'TestCorpus' in guide
+            man=json.loads(b.read('CURRENT_CORPUS_MANIFEST.json'))
+            lock=json.loads(b.read('CORPUS_COVERAGE_LOCK.json'))
+            catalog=json.loads(b.read('CORPUS_CATALOG.json'))
+            assert man['file_count']==lock['locked_file_count']==22299
+            assert man['tree_sha256']==lock['locked_tree_sha256']
+            assert catalog['accounting']['groups']==205
+            assert catalog['accounting']['declared_logical_cases']==2969
+            assert catalog['release_identity']['version']=='2.16'
+            assert catalog['group13_optional_archive']['original_entries']==21633
+            assert a.read('TestCorpus/205_G207_Finder_BDF_Converter_Native_Auditor_New_Validations/EXPECTED_RESULTS.json') == b.read('TestCorpus/205_G207_Finder_BDF_Converter_Native_Auditor_New_Validations/EXPECTED_RESULTS.json')
+            print('VERIFICATION RESULT: PASS; published v2.16 independently downloaded; 21633 original Group13 members moved losslessly to optional ZIP; all other fixtures and IDs preserved')
+            print('CORPUS_TOTALS entries',len(newinfo),'files',sum(not i.is_dir() for i in newinfo),'dirs',sum(i.is_dir() for i in newinfo))
+          PY
