@@ -1,0 +1,59 @@
+name: Compare G207 historical integrity with v2.14
+on:
+  push:
+    branches: [automation/build-g207-v2.15]
+    paths: [.github/workflows/compare-g207-historical.yml]
+permissions: {contents: read}
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install fonttools==4.63.0 brotli==1.2.0
+      - name: Rebuild complete G207 from immutable authoritative v2.14
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v2.14 --repo iwaschristina/xFontGauntlet --pattern xFontGauntlet_v2.14.zip
+          python scripts/build_g207_v2_15.py
+          sha256sum -c xFontGauntlet_v2.15.zip.sha256
+          test "$(sha256sum xFontGauntlet_v2.15.zip | cut -d ' ' -f1)" = 2e06d31b0375cb7589bc4825adb269901888c7f5381237447c8dbb7b2fd736bb
+      - name: Independently stage both complete corpuses
+        run: |
+          python - <<'PY'
+          import zipfile
+          for version in ('2.14','2.15'):
+            with zipfile.ZipFile('xFontGauntlet_v'+version+'.zip') as z:
+              z.extractall('stage'+version.replace('.','_'))
+          PY
+      - name: Run unchanged historical PowerShell validators and compare
+        run: |
+          set +e
+          pwsh -NoProfile -File stage2_14/Tools/Invoke-CorpusValidation.ps1 -Mode Integrity -CorpusRoot "$(pwd)/stage2_14/TestCorpus" -CorpusZipPath "$(pwd)/xFontGauntlet_v2.14.zip" -ReportPath "$(pwd)/before.json" >before.log 2>&1
+          echo "V214_EXIT=$?"
+          pwsh -NoProfile -File stage2_15/Tools/Invoke-CorpusValidation.ps1 -Mode Integrity -CorpusRoot "$(pwd)/stage2_15/TestCorpus" -CorpusZipPath "$(pwd)/xFontGauntlet_v2.15.zip" -ReportPath "$(pwd)/after.json" >after.log 2>&1
+          echo "V215_EXIT=$?"
+          python - <<'PY'
+          import json
+          before={s.replace('stage2_14/','<STAGE>/') for s in json.load(open('before.json')).get('failures',[])}
+          after={s.replace('stage2_15/','<STAGE>/') for s in json.load(open('after.json')).get('failures',[])}
+          diff=sorted(after-before)
+          print('BASELINE_FAILURES',len(before),sorted(before))
+          print('G207_FAILURES',len(after),sorted(after))
+          print('NEW_FAILURES',len(diff),diff)
+          assert len(before)==6 and len(after)==6 and not diff
+          print('G207 HISTORICAL NO-NEW-REGRESSIONS: PASS; LEGACY FULL SUITE: FAIL (6 inherited)')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: G207-historical-failure-delta
+          path: |
+            before.json
+            after.json
+            before.log
+            after.log
+          retention-days: 2
