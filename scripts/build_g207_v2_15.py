@@ -68,6 +68,7 @@ def assert_fixture_structure(old):
         assert plistlib.loads(old.read(p+"layercontents.plist"))==[["public.default","glyphs"]]
 
 from g207_fixture_cases import populate
+from g207_optional_group13 import group13_members,build_optional_group13,OPTIONAL_ZIP,OPTIONAL_GUIDE,SOURCE_PREFIX,GROUP_FOLDER
 
 def build_cases(original):
     return populate(original,write,case,entries,P,sha,jsonb,make_ttf,TTF,cases)
@@ -82,14 +83,28 @@ def build():
         assert original.testzip() is None
         assert all(x in old_names for x in META)
         assert all(x not in old_names for x in entries)
+        group13=group13_members(original)
+        group13_names={x.filename for x in group13}
         new_manifest=build_cases(original)
         assert len(new_manifest["cases"])==31
+        nested_group13=build_optional_group13(original,group13)
+        entries[OPTIONAL_ZIP]=nested_group13
+        entries[OPTIONAL_GUIDE]=(\
+            "OPTIONAL TEST GROUP 13 — corruption matrix\\n"
+            "Ordinary extraction of xFontGauntlet intentionally does NOT extract Group 13.\\n"
+            "For a Group 13 test, extract Group13_Corruption_Matrix_All_Font_Types.zip\\n"
+            "from Tools/Optional Test Groups/ INTO the TestCorpus folder.\\n"
+            "It recreates TestCorpus/13_Corruption_Matrix_All_Font_Types/ with\\n"
+            "all 22,109 original ZIP members and unchanged file bytes.\\n"
+            "Leave it archived for ordinary x01-x04 test runs.\\n"
+            "Do not rename/move the original inside this nested ZIP.\\n"
+        ).encode("utf-8")
         # Create deterministic full TestCorpus manifest/lock over physically
         # present files. Root metadata and Tools archive are not corpus fixtures.
         active={}
         for info in old_info:
             n=info.filename
-            if info.is_dir() or not n.startswith("TestCorpus/"):continue
+            if info.is_dir() or not n.startswith("TestCorpus/") or n in group13_names:continue
             data=original.read(info)
             active[n]={"path":n,"size_bytes":len(data),"sha256":sha(data)}
         for n,b in entries.items():
@@ -97,7 +112,7 @@ def build():
             assert n not in active,n
             active[n]={"path":n,"size_bytes":len(b),"sha256":sha(b)}
         records=sorted(active.values(),key=lambda x:x["path"])
-        dirs=directories([x for x in old_names if x.startswith("TestCorpus/")]+list(entries))
+        dirs=directories([x for x in old_names if x.startswith("TestCorpus/") and x not in group13_names]+list(entries))
         tree=treehash(records)
         source_manifest=json.loads(original.read(META[0]))
         source_lock=json.loads(original.read(META[1]))
@@ -105,8 +120,11 @@ def build():
         source_manifest.update({
             "created_date":"2026-10-14",
             "title":"xFontGauntlet 2.15 Current Corpus Integrity Manifest",
-            "scope":"Active TestCorpus/ only; 20 root metadata files and Tools/ are excluded",
-            "excluded_paths":[],
+            "scope":"Default-extracted TestCorpus/ only. Optional Group 13 is nested under Tools, not extracted automatically.",
+            "excluded_paths":[SOURCE_PREFIX],
+            "optional_nested_groups":[{"group":13,"name":GROUP_FOLDER,"archive_path":OPTIONAL_ZIP,
+                "original_member_count":len(group13),"archive_sha256":sha(nested_group13),
+                "extract_into":"TestCorpus/","source_release":"v2.14"}],
             "baseline_zip_sha256":OLD_HASH,
             "file_count":len(records),
             "directory_count":len(dirs),
@@ -122,7 +140,7 @@ def build():
         source_lock.update({
             "created_date":"2026-10-14",
             "purpose":"Current G207 coverage lock refreshed, prior record retained in archive.",
-            "current_lock_scope":"All active TestCorpus/ files and directories; excludes Tools and root metadata.",
+            "current_lock_scope":"Default-extracted TestCorpus/ files; Group 13 stored as optional nested ZIP under Tools.",
             "locked_file_count":len(records),
             "locked_directory_count":len(dirs),
             "locked_tree_sha256":tree,
@@ -131,6 +149,16 @@ def build():
         })
         existing_groups=catalog.get("groups",[])
         assert isinstance(existing_groups,list)
+        original_group13=next(x for x in existing_groups if x.get("group")==13)
+        original_group13.update({
+            "storage_mode":"optional_nested_zip",
+            "optional_archive_path":OPTIONAL_ZIP,
+            "optional_archive_sha256":sha(nested_group13),
+            "archived_original_zip_entries":len(group13),
+            "historical_file_entries":original_group13.get("file_entries"),
+            "historical_directory_entries":original_group13.get("directory_entries"),
+            "file_entries":0,"directory_entries":0,"content_bytes":0,
+            "installation":"Extract optional Group13 ZIP into TestCorpus/ only when needed."})
         assert not any(x.get("group")==205 for x in existing_groups)
         subfiles=[x for x in records if x["path"].startswith(P)]
         subdirs=[x for x in dirs if x.startswith(P)]
@@ -173,8 +201,20 @@ def build():
             "new_group":GROUP,"declared_case_count":31,
             "changed_metadata":[{"path":name,"old_sha256":sha(original.read(name)),"new_sha256":sha(changes[name]),
               "original_archive":ARCHIVE+"Originals/"+name} for name in META],
-            "old_fixture_files_changed":0,"group_13_unchanged":True,
+            "old_fixture_files_changed":0,"group_13_preserved_in_optional_zip":True,
+            "group_13_original_zip_entries":len(group13),"group_13_archive":OPTIONAL_ZIP,
+            "group_13_archive_sha256":sha(nested_group13),
             "runtime_assertions":"NOT_EXECUTED"
+        })
+        entries[ARCHIVE+"GROUP13_NESTED_RELOCATION.json"]=jsonb({
+            "original_group_prefix":SOURCE_PREFIX,"archive":OPTIONAL_ZIP,
+            "original_zip_entries":len(group13),
+            "original_files":sum(not x.is_dir() for x in group13),
+            "original_directories":sum(x.is_dir() for x in group13),
+            "nested_archive_sha256":sha(nested_group13),
+            "member_prefix_inside_archive":GROUP_FOLDER+"/",
+            "preservation_verified":"all members, file bytes, CRC, date_time and external_attr",
+            "extract_into":"TestCorpus/","group13_routine_exclusion":True
         })
         entries[ARCHIVE+"BUILD_VALIDATION.json"]=jsonb({
             "result":"PENDING_FINAL_FULL_ZIP_AUDIT",
