@@ -1,0 +1,85 @@
+name: Build optional Group13 complete xFontGauntlet v2.16
+on:
+  push:
+    branches: [automation/package-group13-v2.16]
+    paths: [.github/workflows/build-optional-group13-v216.yml]
+permissions: {contents: read}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install fonttools==4.63.0 brotli==1.2.0
+      - name: Download immutable published G207 v2.15 full ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v2.15 --repo iwaschristina/xFontGauntlet --pattern xFontGauntlet_v2.15.zip
+      - name: Repack Group13 without changing any surviving corpus fixture
+        run: |
+          python -m py_compile scripts/g208_optional_group13.py scripts/repack_optional_group13_v2_16.py
+          python scripts/repack_optional_group13_v2_16.py
+          sha256sum -c xFontGauntlet_v2.16.zip.sha256
+      - name: Independently test normal-extraction and optional-restoration integrity
+        run: |
+          python - <<'PY'
+          import zipfile,io,hashlib,json,pathlib,tempfile
+          old='xFontGauntlet_v2.15.zip'
+          new='xFontGauntlet_v2.16.zip'
+          group='TestCorpus/13_Corruption_Matrix_All_Font_Types/'
+          nested='Tools/Optional Test Groups/Group13_Corruption_Matrix_All_Font_Types.zip'
+          guide='Tools/Optional Test Groups/README_Group13.txt'
+          with zipfile.ZipFile(old) as a,zipfile.ZipFile(new) as b:
+            ai=a.infolist();bi=b.infolist()
+            removed=[i for i in ai if i.filename.startswith(group)]
+            assert len(removed)==22109
+            assert len(set(i.filename.casefold() for i in bi))==len(bi)
+            assert b.testzip() is None and nested in b.namelist() and guide in b.namelist()
+            assert not any(i.filename.startswith(group) for i in bi)
+            with zipfile.ZipFile(io.BytesIO(b.read(nested))) as inner:
+              assert len(inner.infolist())==len(removed)
+              assert inner.testzip() is None
+              for before,after in zip(removed,inner.infolist()):
+                assert before.filename[len('TestCorpus/'):] == after.filename
+                assert before.CRC==after.CRC and before.file_size==after.file_size
+                assert before.date_time==after.date_time and before.external_attr==after.external_attr
+                if not before.is_dir():
+                  assert hashlib.sha256(a.read(before)).digest()==hashlib.sha256(inner.read(after)).digest(),before.filename
+            changed={'CURRENT_CORPUS_MANIFEST.json','CORPUS_COVERAGE_LOCK.json','CORPUS_CATALOG.json'}
+            for i in ai:
+              if i.filename.startswith(group) or i.filename in changed:continue
+              j=b.getinfo(i.filename)
+              assert i.CRC==j.CRC and i.file_size==j.file_size and i.compress_size==j.compress_size
+              assert i.date_time==j.date_time and i.external_attr==j.external_attr
+              if not i.is_dir():assert hashlib.sha256(a.read(i)).digest()==hashlib.sha256(b.read(j)).digest(),i.filename
+            root='Tools/Corpus Contamination Finder/Changed Renamed or Removed Corpus Files/G208_Post_v2_15_Group13_Archive/Originals/'
+            for name in changed:assert a.read(name)==b.read(root+name)
+            oldcases='TestCorpus/205_G207_Finder_BDF_Converter_Native_Auditor_New_Validations/EXPECTED_RESULTS.json'
+            assert a.read(oldcases)==b.read(oldcases)
+            man=json.loads(b.read('CURRENT_CORPUS_MANIFEST.json'))
+            lock=json.loads(b.read('CORPUS_COVERAGE_LOCK.json'))
+            cat=json.loads(b.read('CORPUS_CATALOG.json'))
+            assert man['file_count']==lock['locked_file_count']
+            assert man['tree_sha256']==lock['locked_tree_sha256']
+            assert cat['accounting']['groups']==205
+            assert cat['accounting']['declared_logical_cases']==2969
+            assert cat['release_identity']['version']=='2.16'
+            assert cat['group13_optional_archive']['original_entries']==22109
+            with tempfile.TemporaryDirectory() as tmp:
+              zroot=pathlib.Path(tmp,'TestCorpus')
+              zroot.mkdir()
+              with zipfile.ZipFile(io.BytesIO(b.read(nested))) as z:z.extractall(zroot)
+              assert (zroot/'13_Corruption_Matrix_All_Font_Types').is_dir()
+              assert (zroot/'13_Corruption_Matrix_All_Font_Types'/'Bitmap-Console'/'bdf'/'Entire_Content_Duplicated.bdf').exists()
+          print('GROUP13 NESTED ARCHIVE AND DEFAULT EXTRACTION: PASS')
+          print('CORPUS_TOTALS',len(bi),sum(not i.is_dir() for i in bi),sum(i.is_dir() for i in bi))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xFontGauntlet-v2.16-optional-Group13-full-candidate
+          path: |
+            xFontGauntlet_v2.16.zip
+            xFontGauntlet_v2.16.zip.sha256
+          retention-days: 2
