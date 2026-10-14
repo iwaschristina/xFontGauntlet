@@ -1,0 +1,72 @@
+name: Build complete G207 v2.15 and verify physical fixtures
+on:
+  push:
+    branches: [automation/build-g207-v2.15]
+    paths: [.github/workflows/build-g207-v2.15.yml]
+permissions: {contents: read}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install fonttools==4.63.0 brotli==1.2.0
+      - name: Download authoritative full v2.14
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v2.14 --repo iwaschristina/xFontGauntlet --pattern xFontGauntlet_v2.14.zip
+      - name: Compile and produce preservation-verified G207 full ZIP
+        run: |
+          python -m py_compile scripts/build_g207_v2_15.py scripts/g207_fixture_cases.py
+          python scripts/build_g207_v2_15.py
+          sha256sum -c xFontGauntlet_v2.15.zip.sha256
+      - name: Verify 31 declarations, native SFNT/collections, BDF hashes, and large text streams
+        run: |
+          python - <<'PY'
+          import zipfile,json,hashlib,io,plistlib,xml.etree.ElementTree as ET
+          from fontTools.ttLib import TTFont,TTCollection
+          prefix='TestCorpus/205_G207_Finder_BDF_Converter_Native_Auditor_New_Validations/'
+          with zipfile.ZipFile('xFontGauntlet_v2.15.zip') as z:
+              assert z.testzip() is None
+              m=json.loads(z.read(prefix+'EXPECTED_RESULTS.json'))
+              assert m['declared_case_count']==len(m['cases'])==31
+              assert [sum(k in q['projects'] for q in m['cases']) for k in ('x01','x02','x03','x04')]==[0,6,4,21]
+              assert {q['id'] for q in m['cases']}=={f'G207-{i:03d}' for i in range(1,32)}
+              for name,d in m['fixture_hashes'].items():
+                  assert hashlib.sha256(z.read(name)).hexdigest()==d,name
+              for kind in ('TTF','OTF'):
+                  b=z.read(prefix+'01_X02_Native_Font_Preservation_And_Output_Safety/Native_'+kind+'.'+kind.lower())
+                  with TTFont(io.BytesIO(b)) as f: assert 'name' in f
+              for kind in ('TTC','OTC'):
+                  b=z.read(prefix+'01_X02_Native_Font_Preservation_And_Output_Safety/Native_'+kind+'.'+kind.lower())
+                  with TTCollection(io.BytesIO(b)) as c:assert len(c.fonts)>=1
+              for name in ('Entire_Content_Duplicated.bdf','Entire_Content_Triplicated.bdf','Inserted_NUL_16_Middle.bdf'):
+                  raw=z.read(prefix+'02_X03_BDF_Corruption_Detection_CrossTool/'+name)
+                  orig=z.read('TestCorpus/13_Corruption_Matrix_All_Font_Types/Bitmap-Console/bdf/'+name)
+                  assert raw==orig
+              for ext in ('sfd','glyphs'):
+                  root=prefix+('03_X04_Recent_Physical_Validation_Boundaries/LargeSFD/' if ext=='sfd' else '03_X04_Recent_Physical_Validation_Boundaries/LargeGlyphs/')
+                  assert len(z.read(root+'Large_Valid.'+ext))>2*1024*1024
+                  assert len(z.read(root+'Large_MissingEnd.'+ext))>2*1024*1024
+              for name in ('GLIF_Name_Mismatch','GLIF_Missing_Format','GLIF_Uppercase_XML_Root'):
+                  path=prefix+'03_X04_Recent_Physical_Validation_Boundaries/UFO/'+name+'.ufo/'
+                  assert plistlib.loads(z.read(path+'metainfo.plist'))['formatVersion']==3
+              man=json.loads(z.read('CURRENT_CORPUS_MANIFEST.json'))
+              lock=json.loads(z.read('CORPUS_COVERAGE_LOCK.json'))
+              cat=json.loads(z.read('CORPUS_CATALOG.json'))
+              assert man['tree_sha256']==lock['locked_tree_sha256']
+              assert man['file_count']==lock['locked_file_count']
+              assert cat['accounting']['groups']==205
+              assert cat['accounting']['declared_logical_cases']==2969
+              assert cat['release_identity']['version']=='2.15'
+          print('G207 PHYSICAL STRUCTURE AND PRESERVATION: PASS')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: complete-G207-v2.15-candidate
+          path: |
+            xFontGauntlet_v2.15.zip
+            xFontGauntlet_v2.15.zip.sha256
+          retention-days: 2
