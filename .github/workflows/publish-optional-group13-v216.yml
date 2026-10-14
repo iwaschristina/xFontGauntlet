@@ -1,0 +1,44 @@
+name: Publish complete v2.16 with optional Group13 archive
+on:
+  push:
+    branches: [automation/package-group13-v2.16]
+    paths: [.github/workflows/publish-optional-group13-v216.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Require independently verified build and historical comparisons
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/iwaschristina/xFontGauntlet/releases/latest --jq .tag_name)" = v2.15
+          test "$(gh api repos/iwaschristina/xFontGauntlet/actions/runs/38648751766 --jq .conclusion)" = success
+          test "$(gh api repos/iwaschristina/xFontGauntlet/actions/runs/38648894342 --jq .conclusion)" = success
+      - name: Download exact complete v2.16 verified candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 38648751766 --repo iwaschristina/xFontGauntlet --name xFontGauntlet-v2.16-optional-Group13-full-candidate --dir .
+          sha256sum -c xFontGauntlet_v2.16.zip.sha256
+          test "$(sha256sum xFontGauntlet_v2.16.zip | cut -d ' ' -f1)" = 0ec01f19b126e33a4abb4cb028a3ead38900c5348376685cc2e742ba30e84665
+          test "$(stat -c%s xFontGauntlet_v2.16.zip)" = 98917857
+      - name: Publish new immutable complete v2.16
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v2.16 --repo iwaschristina/xFontGauntlet >/dev/null 2>&1; then
+            echo 'Refusing to overwrite existing v2.16 release'
+            exit 1
+          fi
+          gh release create v2.16 \
+            --repo iwaschristina/xFontGauntlet \
+            --target main \
+            --title "xFontGauntlet v2.16 - Group 13 optional ZIP (G207 preserved)" \
+            --notes "Complete authoritative successor to immutable v2.15/G207. The actual Group 13 corruption matrix (21,633 ZIP entries) is now stored intact as Tools/Optional Test Groups/Group13_Corruption_Matrix_All_Font_Types.zip, instead of 21,633 individually extracted TestCorpus entries. Extract the inner ZIP into TestCorpus/ only when Group13 tests are needed; it restores 13_Corruption_Matrix_All_Font_Types/. All member paths, file bytes, CRC, time stamps and external attributes have been independently compared and preserved. 476 other entries matching a broad 13_ subfolder regex were NOT Group13 and correctly stay in the outer archive. All other v2.15 fixtures, 205 groups and 2,969 declared cases are preserved. Only three authoritative root metadata records are regenerated; original bytes are archived under Tools/Corpus Contamination Finder/Changed Renamed or Removed Corpus Files/G208_Post_v2_15_Group13_Archive/Originals/. The default extracted TestCorpus inventory is recalculated to exclude Group13 and remains consistent with its coverage lock. The historical integrity validator reports the same six inherited failures as v2.15, zero new failures. This verifies corpus packaging; native Windows x01-x04 runs were not performed." \
+            --latest \
+            xFontGauntlet_v2.16.zip xFontGauntlet_v2.16.zip.sha256
+          gh release view v2.16 --repo iwaschristina/xFontGauntlet --json tagName,assets
