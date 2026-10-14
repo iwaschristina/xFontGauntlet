@@ -1,0 +1,34 @@
+name: G105 corpus fixture regression and release
+on:
+  push:
+    paths:
+      - scripts/Repair-G105-ExternalReference.py
+      - .github/workflows/g105-corpus-repair.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify v2.10 source and repair G105-03
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download v2.10 --repo iwaschristina/xFontGauntlet --pattern 'xFontGauntlet_v2.10.zip' --dir "$RUNNER_TEMP"
+          echo 'c9e7cbe19e60690594464dd4e51fd119c3a34d7f5bb9e03a98d6c41a15130636  '"$RUNNER_TEMP"'/xFontGauntlet_v2.10.zip' | sha256sum --check
+          python3 scripts/Repair-G105-ExternalReference.py "$RUNNER_TEMP/xFontGauntlet_v2.10.zip" "$RUNNER_TEMP/xFontGauntlet_v2.11.zip" | tee "$RUNNER_TEMP/g105-verification.json"
+          unzip -tq "$RUNNER_TEMP/xFontGauntlet_v2.11.zip" > /dev/null
+          (cd "$RUNNER_TEMP" && sha256sum xFontGauntlet_v2.11.zip > xFontGauntlet_v2.11.zip.sha256)
+      - name: Publish immutable v2.11 and independently compare downloaded asset
+        if: ${{ github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release xFontGauntlet v2.11:') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create v2.11 "$RUNNER_TEMP/xFontGauntlet_v2.11.zip" "$RUNNER_TEMP/xFontGauntlet_v2.11.zip.sha256" --repo iwaschristina/xFontGauntlet --target "$GITHUB_SHA" --title 'xFontGauntlet v2.11 G105 fixture repair' --notes-file RELEASE_NOTES_v2.11.md
+          mkdir -p "$RUNNER_TEMP/recheck"
+          gh release download v2.11 --repo iwaschristina/xFontGauntlet --pattern 'xFontGauntlet_v2.11.zip' --dir "$RUNNER_TEMP/recheck"
+          cmp "$RUNNER_TEMP/xFontGauntlet_v2.11.zip" "$RUNNER_TEMP/recheck/xFontGauntlet_v2.11.zip"
