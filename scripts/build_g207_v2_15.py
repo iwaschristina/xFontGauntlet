@@ -258,14 +258,24 @@ def build():
             assert len(set(x.filename for x in added_info))==len(added_info)
             assert not set(old_names).intersection(x.filename for x in added_info)
             assert addon.testzip() is None
-            order=sorted(enumerate(old_info),key=lambda x:x[1].header_offset)
+            complete_order=sorted(enumerate(old_info),key=lambda x:x[1].header_offset)
+            # Work out physical segment boundaries BEFORE filtering Group 13.
+            # Otherwise removed members' local payloads could leak into a retained segment.
+            original_segment_end={
+                index:(complete_order[pos+1][1].header_offset if pos+1<len(complete_order)
+                       else original.start_dir)
+                for pos,(index,info) in enumerate(complete_order)
+            }
+            order=[(index,info) for index,info in complete_order if info.filename not in group13_names]
+            assert len(order)==len(old_info)-len(group13)
+            assert order[0][1].header_offset==complete_order[0][1].header_offset
             new_offsets={}
             edits={}
             parts=[raw[:order[0][1].header_offset]]
             position=len(parts[0])
             for pos,(index,info) in enumerate(order):
                 a=info.header_offset
-                b=order[pos+1][1].header_offset if pos+1<len(order) else original.start_dir
+                b=original_segment_end[index]
                 segment=raw[a:b]
                 assert segment[:4]==b"PK\x03\x04"
                 if info.filename in changes:
@@ -306,6 +316,9 @@ def build():
                     end=cursor+46+nl+el+cl
                     record=bytearray(blob[cursor:end])
                     assert struct.unpack_from("<I",record,42)[0]==info.header_offset
+                    if offset_index==0 and info.filename in group13_names:
+                        cursor=end
+                        continue
                     struct.pack_into("<I",record,42,new_offsets[offset_index+index])
                     if index in edited:struct.pack_into("<III",record,16,*edited[index])
                     parts.append(record);position+=len(record);cursor=end
@@ -317,9 +330,11 @@ def build():
             assert eocd_old==end_old and eocd_add==end_add
             eocd=bytearray(raw[eocd_old:])
             assert len(eocd)==22+struct.unpack_from("<H",eocd,20)[0]
-            assert len(old_info)+len(added_info)<65535
+            retained_previous_count=len(old_info)-len(group13)
+            assert retained_previous_count+len(added_info)<65535
             assert position-central_offset<0xffffffff and central_offset<0xffffffff
-            struct.pack_into("<HH",eocd,8,len(old_info)+len(added_info),len(old_info)+len(added_info))
+            struct.pack_into("<HH",eocd,8,retained_previous_count+len(added_info),
+                             retained_previous_count+len(added_info))
             struct.pack_into("<II",eocd,12,position-central_offset,central_offset)
             parts.append(eocd)
             NEW.write_bytes(b"".join(parts))
@@ -327,7 +342,10 @@ def build():
             try:
                 with zipfile.ZipFile(NEW) as result:
                     full=result.infolist()
-                    assert len(full)==len(old_info)+len(added_info)
+                    assert len(full)==retained_previous_count+len(added_info)
+                    assert not any(x.filename.startswith(SOURCE_PREFIX) for x in full)
+                    assert result.read(OPTIONAL_ZIP)==nested_group13
+                    assert sha(result.read(OPTIONAL_ZIP))==sha(nested_group13)
                     assert len(set(i.filename for i in full))==len(full)
                     assert result.testzip() is None
                     assert original.comment==result.comment
@@ -337,7 +355,8 @@ def build():
                     fields=("CRC","file_size","compress_size","compress_type","date_time",
                             "flag_bits","extra","comment","external_attr","internal_attr","create_system")
                     changed_count=0
-                    for before,after in zip(old_info,full):
+                    retained_old=[i for i in old_info if i.filename not in group13_names]
+                    for before,after in zip(retained_old,full):
                         assert before.filename==after.filename
                         if before.filename in changes:
                             changed_count+=1
@@ -363,11 +382,17 @@ def build():
                         "TestCorpus/196_Recent_X01_X04_Regression_Cases_20261013/07_Cross_Tool_Folder_Atomics/Finder_Copied_Set.ufo/",
                         "TestCorpus/197_Recent_X01_X04_Regression_Cases_20261013/01_Rename_248_Boundary/Input/NestedFinderSet.ufo/"):
                         assert result.read(prefix+"layercontents.plist")==original.read(prefix+"layercontents.plist")
-                    group13=[i for i in old_info if re.search(r"(^|/)13_[^/]+/",i.filename)]
                     assert len(group13)==22109
-                    for i in group13:
-                        j=result.getinfo(i.filename)
-                        assert i.CRC==j.CRC and i.file_size==j.file_size and i.compress_size==j.compress_size
+                    with zipfile.ZipFile(io.BytesIO(result.read(OPTIONAL_ZIP))) as nested:
+                        inner=nested.infolist()
+                        assert len(inner)==len(group13)
+                        assert nested.testzip() is None
+                        for i,j in zip(group13,inner):
+                            assert j.filename==i.filename[len("TestCorpus/"):]
+                            assert i.CRC==j.CRC and i.file_size==j.file_size
+                            assert i.date_time==j.date_time and i.external_attr==j.external_attr
+                            if not i.is_dir():
+                                assert sha(original.read(i))==sha(nested.read(j)),i.filename
                     # Every physical active file is accounted for by the regenerated lock.
                     m=json.loads(result.read(META[0]))
                     lock=json.loads(result.read(META[1]))
@@ -393,8 +418,10 @@ def build():
                     print("VERIFICATION RESULT: PASS",
                           json.dumps({"previous_entries":len(old_info),"new_entries":len(added_info),
                                       "new_cases":31,"active_files":len(records),
-                                      "group13_original_entries":len(group13),
-                                      "unchanged_previous_font_fixtures":True,
+                                      "group13_nested_entries":len(group13),
+                                      "group13_optional_zip":OPTIONAL_ZIP,
+                                      "default_extraction_group13_entries":0,
+                                      "unchanged_previous_font_fixtures_except_nested_group13":True,
                                       "modified_root_metadata":3,
                                       "archive_size":NEW.stat().st_size},sort_keys=True))
             except:
