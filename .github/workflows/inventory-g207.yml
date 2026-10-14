@@ -1,0 +1,28 @@
+name: Inspect published G206 for x01-x04 new fixture source candidates
+on:
+  push:
+    branches: [automation/build-g207-v2.15]
+    paths: [.github/workflows/inventory-g207.yml]
+permissions: {contents: read}
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download complete G206 ZIP
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v2.14 --repo iwaschristina/xFontGauntlet --pattern xFontGauntlet_v2.14.zip
+      - name: Find valid native, malformed BDF and UFO examples
+        run: |
+          python3 - <<'PY'
+          import zipfile,collections
+          with zipfile.ZipFile('xFontGauntlet_v2.14.zip') as z:
+            infos=z.infolist()
+            for pat in ('Entire_Content_Duplicated.bdf','Entire_Content_Triplicated.bdf','Inserted_NUL_16_Middle.bdf','Valid_Content_Route_Probe.otb','valid.pfb'):
+              found=[(i.filename,i.file_size) for i in infos if pat.lower() in i.filename.lower()]
+              print('MATCH',pat,len(found),found[:12])
+            for ext in ('.ttc','.otc','.ttf','.otf','.woff','.svg','.sfd','.glyphs','.bdf'):
+              found=[(i.filename,i.file_size) for i in infos if not i.is_dir() and i.filename.lower().endswith(ext) and i.file_size>=100 and i.file_size<250000 and '/13_' not in i.filename]
+              found.sort(key=lambda x:(x[1],x[0]))
+              print('CANDIDATE',ext,len(found),found[:5])
+          PY
