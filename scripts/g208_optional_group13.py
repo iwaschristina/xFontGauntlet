@@ -12,7 +12,7 @@ OPTIONAL_GUIDE = "Tools/Optional Test Groups/README_Group13.txt"
 
 def group13_members(old):
     infos=[x for x in old.infolist() if x.filename.startswith(SOURCE_PREFIX)]
-    assert len(infos)==22109,("Group13 membership changed",len(infos))
+    assert len(infos)==21633,("Group13 membership changed",len(infos))
     assert any(i.is_dir() for i in infos) and any(not i.is_dir() for i in infos)
     return infos
 
