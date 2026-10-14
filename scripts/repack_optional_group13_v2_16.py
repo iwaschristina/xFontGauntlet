@@ -363,7 +363,7 @@ def build():
                         "TestCorpus/196_Recent_X01_X04_Regression_Cases_20261013/07_Cross_Tool_Folder_Atomics/Finder_Copied_Set.ufo/",
                         "TestCorpus/197_Recent_X01_X04_Regression_Cases_20261013/01_Rename_248_Boundary/Input/NestedFinderSet.ufo/"):
                         assert result.read(prefix+"layercontents.plist")==original.read(prefix+"layercontents.plist")
-                    assert len(group13)==22109
+                    assert len(group13)==21633
                     with zipfile.ZipFile(io.BytesIO(result.read(OPTIONAL_ZIP))) as nested:
                         inner=nested.infolist()
                         assert len(inner)==len(group13)
